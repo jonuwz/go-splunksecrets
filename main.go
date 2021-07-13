@@ -30,6 +30,8 @@ func getSplunkSecret(path string) ([]byte, error) {
 	return ioutil.ReadFile(path)
 }
 
+
+func newGCM(password []byte)  
 func EncryptSplunk(password []byte, plaintext []byte) ([]byte, error) {
 
 	// all this does is take the splunk secret, with is static
@@ -134,7 +136,7 @@ func main() {
 		}
 	} else {
 		// encrypt
-		output, err = EncryptSplunk(splunkSecret, []byte("lala"))
+		output, err = EncryptSplunk(splunkSecret, input)
 		if err != nil {
 			panic(err.Error())
 		}
