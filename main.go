@@ -10,34 +10,42 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
-	"golang.org/x/crypto/pbkdf2"
 	"io"
 	"io/ioutil"
 	"os"
+
+	"golang.org/x/crypto/pbkdf2"
 )
 
 var (
-	iterations          = 1 // lame
+	iterations          = 1
 	keyLen              = 32
 	nonceLen            = 16                        // non-standard
 	salt                = []byte("disk-encryption") // static salt
-	debug               = false
 	flgSplunkSecretFile = flag.String("splunk.secret", "/opt/splunk/etc/auth/splunk.secret", "path to splunk-secret file")
 	flgDecrypt          = flag.Bool("decrypt", false, "decrypt")
+	flgDebug            = flag.Bool("debug", false, "debug")
 )
 
 func getSplunkSecret(path string) ([]byte, error) {
 	return ioutil.ReadFile(path)
 }
 
-
-func newGCM(password []byte)  
-func EncryptSplunk(password []byte, plaintext []byte) ([]byte, error) {
-
+func newGCM(password []byte) (cipher.AEAD, error) {
 	// all this does is take the splunk secret, with is static
 	// and creates a secure key to do the actual encryption with
 	dk := pbkdf2.Key(password, salt, iterations, keyLen, sha256.New)
 	block, err := aes.NewCipher(dk)
+	if err != nil {
+		return nil, err
+	}
+
+	return cipher.NewGCMWithNonceSize(block, nonceLen)
+}
+
+func EncryptSplunk(password []byte, plaintext []byte, debug bool) ([]byte, error) {
+
+	aesgcm, err := newGCM(password)
 	if err != nil {
 		return nil, err
 	}
@@ -47,19 +55,12 @@ func EncryptSplunk(password []byte, plaintext []byte) ([]byte, error) {
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
-	aesgcm, err := cipher.NewGCMWithNonceSize(block, nonceLen)
-	if err != nil {
-		return nil, err
-	}
 
 	// encrypt
 	ciphertext := aesgcm.Seal(nil, nonce, plaintext, nil)
 
 	if debug {
-		fmt.Println("encryption nonce :")
-		fmt.Println(nonce)
-		fmt.Println("encryption ciphertext :")
-		fmt.Println(ciphertext)
+		fmt.Fprintf(os.Stderr, "     nonce : %v\nciphertext : %v\n", nonce, ciphertext)
 	}
 
 	// base64 encode the nonce + encrypted text
@@ -74,12 +75,14 @@ func EncryptSplunk(password []byte, plaintext []byte) ([]byte, error) {
 
 }
 
-func DecryptSplunk(password []byte, encryptedBytes []byte) ([]byte, error) {
+func isPiped() bool {
+	fi, _ := os.Stdin.Stat()
+	return (fi.Mode() & os.ModeCharDevice) == 0
+}
 
-	// all this does is take the splunk secret, with is static
-	// and creates a secure key to do the actual encryption with
-	dk := pbkdf2.Key(password, salt, iterations, keyLen, sha256.New)
-	block, err := aes.NewCipher(dk)
+func DecryptSplunk(password []byte, encryptedBytes []byte, debug bool) ([]byte, error) {
+
+	aesgcm, err := newGCM(password)
 	if err != nil {
 		return nil, err
 	}
@@ -98,16 +101,7 @@ func DecryptSplunk(password []byte, encryptedBytes []byte) ([]byte, error) {
 	ciphertext := bytes[16:]
 
 	if debug {
-		fmt.Println("decryption nonce :")
-		fmt.Println(nonce)
-		fmt.Println("decryption ciphertext :")
-		fmt.Println(ciphertext)
-	}
-
-	// construct the decoder
-	aesgcm, err := cipher.NewGCMWithNonceSize(block, nonceLen)
-	if err != nil {
-		return nil, err
+		fmt.Fprintf(os.Stderr, "     nonce : %v\nciphertext : %v\n", nonce, ciphertext)
 	}
 
 	// decode
@@ -124,23 +118,24 @@ func main() {
 	// splunk secret should be 254 bytes long. hours !!!
 	splunkSecret = splunkSecret[0:254]
 
+	if !isPiped() {
+		fmt.Printf("Enter text : ")
+	}
+
 	reader := bufio.NewReader(os.Stdin)
 	input, _ := reader.ReadBytes('\n')
 
 	output := []byte("")
 	if *flgDecrypt == true {
-		//decrypt
-		output, err = DecryptSplunk(splunkSecret, input)
-		if err != nil {
-			panic(err.Error())
-		}
+		output, err = DecryptSplunk(splunkSecret, input, *flgDebug)
 	} else {
-		// encrypt
-		output, err = EncryptSplunk(splunkSecret, input)
-		if err != nil {
-			panic(err.Error())
-		}
+		output, err = EncryptSplunk(splunkSecret, input, *flgDebug)
 	}
+
+	if err != nil {
+		panic(err.Error())
+	}
+
 	fmt.Println(string(output))
 
 }
