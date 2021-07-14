@@ -28,7 +28,15 @@ var (
 )
 
 func getSplunkSecret(path string) ([]byte, error) {
-	return ioutil.ReadFile(path)
+	splunkSecret, err := ioutil.ReadFile(path)
+	if err != nil {
+		return []byte(""), err
+	}
+	splunkSecret = bytes.TrimRight(splunkSecret, "\r\n")
+	if len(splunkSecret) != 254 {
+		return []byte(""), fmt.Errorf("SplunkSecret is not 254 bytes long")
+	}
+	return splunkSecret, nil
 }
 
 func newGCM(password []byte) (cipher.AEAD, error) {
@@ -82,6 +90,10 @@ func isPiped() bool {
 
 func DecryptSplunk(password []byte, encryptedBytes []byte, debug bool) ([]byte, error) {
 
+	if string(encryptedBytes[0:3]) != "$7$" {
+		return nil, fmt.Errorf("Invalid string to decrypt")
+	}
+
 	aesgcm, err := newGCM(password)
 	if err != nil {
 		return nil, err
@@ -115,8 +127,6 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	// splunk secret should be 254 bytes long. hours !!!
-	splunkSecret = splunkSecret[0:254]
 
 	if !isPiped() {
 		fmt.Printf("Enter text : ")
